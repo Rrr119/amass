@@ -77,6 +77,10 @@ type DocumentStatementRecord struct {
 	Status     string         `json:"status"`
 	Actor      string         `json:"actor,omitempty"`
 	At         time.Time      `json:"at"`
+	// Through is where in the document's cleaned text a reading capped by
+	// options.ai.documents.max_chunks stopped, so a later reading continues
+	// there; 0 for a reading of the whole document.
+	Through int `json:"through,omitempty"`
 }
 
 // documentStatementUndo journals that a stored reading was undone.
@@ -94,8 +98,18 @@ type documentStatementUndo struct {
 // error returned: nothing is stored that cannot be undone.
 func StoreDocumentStatements(ctx context.Context, w DocumentStatementStore, j *Journal, fileID, url, sha256,
 	model string, statements []StoredStatement) (DocumentStatementRecord, error) {
+	return StorePartialDocumentStatements(ctx, w, j, fileID, url, sha256, model, statements, 0)
+}
+
+// StorePartialDocumentStatements is StoreDocumentStatements for a reading
+// that stopped at offset through of the document's cleaned text (0: the whole
+// document was read). A version read only in part is not counted as read
+// (ReadVersions); VersionProgress gives where the next reading starts.
+func StorePartialDocumentStatements(ctx context.Context, w DocumentStatementStore, j *Journal, fileID, url, sha256,
+	model string, statements []StoredStatement, through int) (DocumentStatementRecord, error) {
 	rec := DocumentStatementRecord{FileID: fileID, URL: url, SHA256: sha256, Model: model,
-		Predicates: map[string]int{}, Status: StatementsStored, Actor: InferenceSource, At: time.Now().UTC()}
+		Predicates: map[string]int{}, Status: StatementsStored, Actor: InferenceSource, At: time.Now().UTC(),
+		Through: through}
 	if fileID == "" || model == "" {
 		return rec, errors.New("document statements need a File and a model")
 	}
@@ -199,7 +213,8 @@ func (j *Journal) DocumentStatementRecords() ([]DocumentStatementRecord, error) 
 }
 
 // ReadVersions returns the document versions (content SHA-256) that have a
-// stored reading, so each version is read once wherever it was found.
+// stored reading of the whole document, so each version is read once wherever
+// it was found. A version read only in part is continued (VersionProgress).
 func (j *Journal) ReadVersions() (map[string]bool, error) {
 	recs, err := j.DocumentStatementRecords()
 	if err != nil {
@@ -208,9 +223,36 @@ func (j *Journal) ReadVersions() (map[string]bool, error) {
 
 	out := map[string]bool{}
 	for _, r := range recs {
-		if r.Status == StatementsStored && r.SHA256 != "" {
+		if r.Status == StatementsStored && r.SHA256 != "" && r.Through == 0 {
 			out[r.SHA256] = true
 		}
+	}
+	return out, nil
+}
+
+// VersionProgress returns, for each document version read only in part, the
+// offset of its cleaned text the next reading starts at: the furthest a
+// stored partial reading reached. A version read whole is not listed.
+func (j *Journal) VersionProgress() (map[string]int, error) {
+	recs, err := j.DocumentStatementRecords()
+	if err != nil {
+		return nil, err
+	}
+
+	out := map[string]int{}
+	complete := map[string]bool{}
+	for _, r := range recs {
+		if r.Status != StatementsStored || r.SHA256 == "" {
+			continue
+		}
+		if r.Through == 0 {
+			complete[r.SHA256] = true
+		} else if r.Through > out[r.SHA256] {
+			out[r.SHA256] = r.Through
+		}
+	}
+	for sha := range complete {
+		delete(out, sha)
 	}
 	return out, nil
 }

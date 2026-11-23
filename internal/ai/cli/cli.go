@@ -419,6 +419,7 @@ func run(group string, in io.Reader, out, errout io.Writer, args []string) error
 		}
 		docRun, err := ai.ReadDocuments(context.Background(), dg, repo, j, root, ai.DocumentRunOptions{Model: dm,
 			ModelID: modelID, ModelTimeout: timeout, ChunkChars: effective.Documents.ChunkChars, Max: docMax,
+			MaxChunks: effective.Documents.MaxChunks, DocumentTimeout: effective.Documents.DocumentTimeoutDuration(),
 			Reread: docReread, DryRun: docDryRun})
 		if werr := writeDocumentRun(out, graph.AssetLabel(root), docRun); werr != nil && err == nil {
 			err = werr

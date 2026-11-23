@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -79,6 +80,10 @@ type DocumentReading struct {
 	Statements []DocumentStatement `json:"statements"`
 	Rejected   []string            `json:"rejected,omitempty"`
 	Chunks     int                 `json:"chunks"`
+	// Through is where in the cleaned text a reading stopped at its part or
+	// time limit (readLimits), so the next reading starts there; 0 when the
+	// reading reached the end of the document.
+	Through int `json:"through,omitempty"`
 }
 
 // chunkReply is the model's reply for one chunk.
@@ -113,11 +118,27 @@ type chunkReply struct {
 // until checked here against the text itself.
 func ReadDocument(ctx context.Context, model llm.Model, modelID, url, text string, chunkChars int) (DocumentReading,
 	error) {
-	return readDocument(ctx, model, modelID, url, text, chunkChars, nil)
+	return readDocument(ctx, model, modelID, url, text, chunkChars, readLimits{}, nil)
 }
 
-// readDocument is ReadDocument, calling onChunk after each chunk is read.
-func readDocument(ctx context.Context, model llm.Model, modelID, url, text string, chunkChars int,
+// readLimits bound one reading of a document. The zero value reads the whole
+// document from its start.
+type readLimits struct {
+	// from is the offset of the cleaned text the reading starts at, where an
+	// earlier reading stopped.
+	from int
+	// maxChunks caps the chunks read (options.ai.documents.max_chunks).
+	maxChunks int
+	// timeout caps the time spent on the document
+	// (options.ai.documents.document_timeout): past it, no further chunk is
+	// started. A chunk already started finishes, within model_timeout.
+	timeout time.Duration
+}
+
+// readDocument is ReadDocument within limits, calling onChunk after each chunk
+// is read. A reading that stops at a limit before the end of the document says
+// where (Through), so a later reading continues there.
+func readDocument(ctx context.Context, model llm.Model, modelID, url, text string, chunkChars int, limits readLimits,
 	onChunk func()) (DocumentReading, error) {
 	var out DocumentReading
 	if model == nil {
@@ -127,23 +148,37 @@ func readDocument(ctx context.Context, model llm.Model, modelID, url, text strin
 		chunkChars = DefaultDocumentChunk
 	}
 
-	chunks := chunkText(cleanText(text), chunkChars)
-	if len(chunks) == 0 {
+	clean := cleanText(text)
+	spans := chunkSpans(clean, chunkChars)
+	first := 0
+	for first < len(spans) && spans[first].start < limits.from {
+		first++
+	}
+	if first >= len(spans) {
 		return out, nil
 	}
+	started := time.Now()
 
 	v := documentVocabulary()
 	system := documentPrompt(v)
 	schema := documentSchema(v)
 	seen := map[string]bool{}
 	categories := map[string]int{}
-	for i, chunk := range chunks {
+	for i := first; i < len(spans); i++ {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
+		// past a limit, the rest is left for the next reading, which starts
+		// at this chunk
+		if i > first && ((limits.maxChunks > 0 && i-first >= limits.maxChunks) ||
+			(limits.timeout > 0 && time.Since(started) >= limits.timeout)) {
+			out.Through = spans[i].start
+			break
+		}
+		chunk := clean[spans[i].start:spans[i].end]
 		history := []llm.Message{
 			{Role: "system", Text: system},
-			{Role: "user", Text: fmt.Sprintf("Document: %s\nPart %d of %d:\n%s", url, i+1, len(chunks), chunk)},
+			{Role: "user", Text: fmt.Sprintf("Document: %s\nPart %d of %d:\n%s", url, i+1, len(spans), chunk)},
 		}
 		resp, err := generateJSON(ctx, model, history, schema)
 		if errors.Is(err, llm.ErrReplyLength) {
@@ -158,7 +193,7 @@ func readDocument(ctx context.Context, model llm.Model, modelID, url, text strin
 		}
 		if err != nil {
 			return out, &documentError{kind: modelFailure(err),
-				err: fmt.Errorf("part %d of %d: %w", i+1, len(chunks), err)}
+				err: fmt.Errorf("part %d of %d: %w", i+1, len(spans), err)}
 		}
 		out.Chunks++
 		if onChunk != nil {
@@ -236,26 +271,48 @@ func topCategory(counts map[string]int) string {
 // chunkText splits text into chunks of at most size bytes, each ending at a
 // sentence or line end where one is near, overlapping by chunkOverlap.
 func chunkText(text string, size int) []string {
-	text = strings.TrimSpace(text)
 	var out []string
-	for len(text) > size {
-		cut := size
-		if i := strings.LastIndexAny(text[:size], ".!?\n"); i > size/2 {
-			cut = i + 1
-		}
-		cut = runeStart(text, cut)
-		out = append(out, strings.TrimSpace(text[:cut]))
-
-		next := runeStart(text, max(cut-chunkOverlap, 1))
-		if next <= 0 {
-			next = cut
-		}
-		text = strings.TrimSpace(text[next:])
-	}
-	if text != "" {
-		out = append(out, text)
+	for _, s := range chunkSpans(text, size) {
+		out = append(out, text[s.start:s.end])
 	}
 	return out
+}
+
+// span is a chunk's place in the text: text[start:end].
+type span struct{ start, end int }
+
+// chunkSpans is chunkText as offsets into text, so a reading can say where it
+// stopped and a later one start there. The same text and size always give the
+// same spans.
+func chunkSpans(text string, size int) []span {
+	end := len(strings.TrimRightFunc(text, unicode.IsSpace))
+	pos := skipSpace(text, 0)
+
+	var out []span
+	for end-pos > size {
+		cut := pos + size
+		if i := strings.LastIndexAny(text[pos:pos+size], ".!?\n"); i > size/2 {
+			cut = pos + i + 1
+		}
+		cut = runeStart(text, cut)
+		out = append(out, span{start: pos, end: pos + len(strings.TrimRightFunc(text[pos:cut], unicode.IsSpace))})
+
+		next := runeStart(text, max(cut-chunkOverlap, pos+1))
+		if next <= pos {
+			next = cut
+		}
+		pos = skipSpace(text, next)
+	}
+	if pos < end {
+		out = append(out, span{start: pos, end: end})
+	}
+	return out
+}
+
+// skipSpace returns the offset of the first character at or after i that is
+// not white space.
+func skipSpace(text string, i int) int {
+	return i + len(text[i:]) - len(strings.TrimLeftFunc(text[i:], unicode.IsSpace))
 }
 
 // runeStart moves i back to the start of the UTF-8 sequence it falls in.

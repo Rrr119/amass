@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/owasp-amass/amass/v5/internal/ai/llm"
 	"github.com/owasp-amass/amass/v5/internal/review"
@@ -328,5 +329,59 @@ func TestReadDocumentCleansControlCharacters(t *testing.T) {
 	}
 	if strings.ContainsRune(model.histories[0][1].Text, '\f') {
 		t.Error("the model was sent a control character")
+	}
+}
+
+// A reading capped at a number of parts says where it stopped, and the next
+// reading, starting there, reads the rest of the document: every part is read
+// once across the two.
+func TestReadingResumesWhereItStopped(t *testing.T) {
+	text := strings.Repeat("Filler sentence about the campus grounds. ", 200) + docText
+	empty := `{"category": "other", "assets": [], "statements": [], "attributes": []}`
+	all := len(chunkSpans(cleanText(text), 2000))
+	if all < 4 {
+		t.Fatalf("%d parts; the test needs a long document", all)
+	}
+
+	first := &docModel{replies: []string{empty}}
+	r, err := readDocument(context.Background(), first, "m", "u", text, 2000, readLimits{maxChunks: 2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Chunks != 2 || r.Through <= 0 {
+		t.Fatalf("a reading capped at 2 parts read %d and stopped at %d", r.Chunks, r.Through)
+	}
+
+	rest := &docModel{replies: []string{empty}}
+	r2, err := readDocument(context.Background(), rest, "m", "u", text, 2000, readLimits{from: r.Through}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Through != 0 || r.Chunks+r2.Chunks != all {
+		t.Errorf("the two readings read %d+%d of %d parts (second stopped at %d)", r.Chunks, r2.Chunks, all,
+			r2.Through)
+	}
+	if !strings.Contains(rest.histories[len(rest.histories)-1][1].Text, "vpn.herkimer.edu") {
+		t.Error("the continued reading never reached the end of the document")
+	}
+	if !strings.Contains(rest.histories[0][1].Text, fmt.Sprintf("Part 3 of %d", all)) {
+		t.Errorf("the continued reading does not number its first part as the third: %q",
+			rest.histories[0][1].Text[:60])
+	}
+}
+
+// Past its time limit a reading starts no further part; the part in progress
+// counts, so a reading always makes progress.
+func TestReadingStopsAtItsTimeLimit(t *testing.T) {
+	text := strings.Repeat("Filler sentence about the campus grounds. ", 200) + docText
+	model := &docModel{replies: []string{`{"category": "other", "assets": [], "statements": [], "attributes": []}`}}
+
+	r, err := readDocument(context.Background(), model, "m", "u", text, 2000, readLimits{timeout: time.Nanosecond},
+		nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Chunks != 1 || r.Through <= 0 {
+		t.Errorf("a reading past its time limit read %d parts and stopped at %d, want 1 part", r.Chunks, r.Through)
 	}
 }

@@ -67,6 +67,12 @@ type DocumentRunOptions struct {
 	ModelTimeout time.Duration
 	// ChunkChars is how much text one model request reads (default 12000).
 	ChunkChars int
+	// MaxChunks bounds the chunks of one document read in one reading
+	// (options.ai.documents.max_chunks), and DocumentTimeout the time spent
+	// on it (options.ai.documents.document_timeout); the next reading
+	// continues where it stopped. 0 sets no bound.
+	MaxChunks       int
+	DocumentTimeout time.Duration
 	// Max bounds the documents read in one run; 0 reads them all.
 	Max int
 	// Reread reads documents again even when their version was read,
@@ -155,7 +161,10 @@ type DocumentResult struct {
 	Statements int    `json:"statements"`
 	Rejected   int    `json:"rejected,omitempty"`
 	ReadingID  string `json:"reading_id,omitempty"`
-	Error      string `json:"error,omitempty"`
+	// Through is where the reading stopped at MaxChunks or DocumentTimeout;
+	// the document's next reading continues there.
+	Through int    `json:"through,omitempty"`
+	Error   string `json:"error,omitempty"`
 	// Failure is why the document could not be read (Failure* kinds).
 	Failure string `json:"failure,omitempty"`
 	// Stale reports the document's own dates older than
@@ -171,8 +180,11 @@ type DocumentRun struct {
 	Documents []DocumentResult `json:"documents"`
 	Read      int              `json:"read"`
 	// Skipped counts documents whose version was already read.
-	Skipped    int  `json:"skipped"`
+	Skipped int `json:"skipped"`
+	// Remaining counts documents left for another run: past Max, or read
+	// only in part (Partial).
 	Remaining  int  `json:"remaining"`
+	Partial    int  `json:"partial,omitempty"`
 	Failed     int  `json:"failed"`
 	Statements int  `json:"statements"`
 	Rejected   int  `json:"rejected"`
@@ -211,6 +223,11 @@ func ReadDocuments(ctx context.Context, g graph.Graph, store review.DocumentStat
 		return run, err
 	}
 	read, err := j.ReadVersions()
+	if err != nil {
+		return run, err
+	}
+	// versions read only in part continue where their last reading stopped
+	progress, err := j.VersionProgress()
 	if err != nil {
 		return run, err
 	}
@@ -257,7 +274,12 @@ func ReadDocuments(ctx context.Context, g graph.Graph, store review.DocumentStat
 			continue
 		}
 
-		reading, err := readDocument(ctx, opts.Model, opts.ModelID, src.URL, text, opts.ChunkChars, opts.OnChunk)
+		limits := readLimits{maxChunks: opts.MaxChunks, timeout: opts.DocumentTimeout}
+		if !opts.Reread {
+			limits.from = progress[sha]
+		}
+		reading, err := readDocument(ctx, opts.Model, opts.ModelID, src.URL, text, opts.ChunkChars, limits,
+			opts.OnChunk)
 		if err != nil {
 			if ctx.Err() != nil {
 				return run, ctx.Err()
@@ -268,6 +290,11 @@ func ReadDocuments(ctx context.Context, g graph.Graph, store review.DocumentStat
 
 		run.Read++
 		res.Category, res.Chunks, res.Rejected = reading.Category, reading.Chunks, len(reading.Rejected)
+		res.Through = reading.Through
+		if reading.Through > 0 {
+			run.Partial++
+			run.Remaining++
+		}
 		res.Stored = reading.Stored(src.URL, sha)
 		res.Statements = len(res.Stored)
 		if !opts.DryRun {
@@ -276,13 +303,15 @@ func ReadDocuments(ctx context.Context, g graph.Graph, store review.DocumentStat
 					return run, err
 				}
 			}
-			rec, err := review.StoreDocumentStatements(ctx, store, j, src.FileID, src.URL, sha, opts.ModelID,
-				res.Stored)
+			rec, err := review.StorePartialDocumentStatements(ctx, store, j, src.FileID, src.URL, sha, opts.ModelID,
+				res.Stored, reading.Through)
 			if err != nil {
 				return run, err
 			}
 			res.ReadingID = rec.ID
-			read[sha] = true
+			if reading.Through == 0 {
+				read[sha] = true
+			}
 		}
 		run.Statements += res.Statements
 		run.Rejected += res.Rejected

@@ -93,6 +93,11 @@ type DocumentCompanion struct {
 	// stops asking to keep the run open once the documents left would not
 	// be read within it; 0 makes no such estimate.
 	Hold time.Duration
+	// MaxChunks and DocumentTimeout bound one reading of one document
+	// (options.ai.documents.max_chunks and document_timeout); a document
+	// read in part is continued by the next pass or run.
+	MaxChunks       int
+	DocumentTimeout time.Duration
 }
 
 // companionRun is the companion's state for one run.
@@ -290,6 +295,7 @@ func (c *DocumentCompanion) pass(ctx context.Context, run collect.Run, act colle
 		started := time.Now()
 		res, err := ReadDocuments(ctx, c.Graph, c.Store, c.Journal, root, DocumentRunOptions{Model: c.Model,
 			ModelID: c.ModelID, ModelTimeout: c.ModelTimeout, ChunkChars: c.ChunkChars, Max: batch,
+			MaxChunks: c.MaxChunks, DocumentTimeout: c.DocumentTimeout,
 			Fetcher: c.Fetcher, Schema: c.Schema, OnChunk: func() { count(act, ActivityChunksRead, 1) },
 			Skip: st.skip})
 		if err != nil {

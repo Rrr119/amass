@@ -112,6 +112,34 @@ type DocumentModelSettings struct {
 	// be read within it. Documents left unread are read by the next run or
 	// read_documents.
 	Hold string `yaml:"hold,omitempty" json:"hold,omitempty"`
+	// DocumentTimeout bounds the time one reading spends on one document
+	// (default 10m; 0 sets no bound). Past it no further chunk is started; the
+	// document's next reading continues where this one stopped. A fast model
+	// reads whole documents within it; a slow one leaves the rest of a long
+	// document for later passes and runs.
+	DocumentTimeout string `yaml:"document_timeout,omitempty" json:"document_timeout,omitempty"`
+	// MaxChunks caps the chunks one reading takes from one document (0, the
+	// default, sets no cap), mainly to bound the tokens a hosted model is
+	// paid for; the rest is read by the next reading.
+	MaxChunks int `yaml:"max_chunks,omitempty" json:"max_chunks,omitempty"`
+}
+
+// DefaultDocumentTimeout bounds one reading of one document when
+// options.ai.documents.document_timeout is not set.
+const DefaultDocumentTimeout = 10 * time.Minute
+
+// DocumentTimeoutDuration returns DocumentTimeout, DefaultDocumentTimeout when
+// it is not set, and 0 (no bound) when it is set to 0.
+func (d *DocumentModelSettings) DocumentTimeoutDuration() time.Duration {
+	if d == nil || strings.TrimSpace(d.DocumentTimeout) == "" {
+		return DefaultDocumentTimeout
+	}
+
+	v, err := time.ParseDuration(strings.TrimSpace(d.DocumentTimeout))
+	if err != nil || v < 0 {
+		return DefaultDocumentTimeout
+	}
+	return v
 }
 
 // HoldDuration returns Hold, and false when it is not set.
@@ -165,6 +193,15 @@ func (d *DocumentModelSettings) Validate() error {
 		if err != nil || v < 0 || v > 2*time.Hour {
 			return fmt.Errorf("options.ai.documents.hold must be 0..2h")
 		}
+	}
+	if d.DocumentTimeout != "" {
+		v, err := time.ParseDuration(strings.TrimSpace(d.DocumentTimeout))
+		if err != nil || v < 0 || v > 6*time.Hour {
+			return fmt.Errorf("options.ai.documents.document_timeout must be 0..6h")
+		}
+	}
+	if d.MaxChunks < 0 || d.MaxChunks > 10000 {
+		return fmt.Errorf("options.ai.documents.max_chunks must be 0 (no cap) or up to 10000")
 	}
 	return nil
 }

@@ -135,6 +135,12 @@ options:
   #     # sooner once the documents left could not be read in time; the next
   #     # run reads them:
   #     hold: 15m
+  #     # The longest one reading spends on one document (0 = no limit); the
+  #     # rest of a long document is read by the next reading:
+  #     document_timeout: 10m
+  #     # The most parts of one document one reading takes (0 = no cap),
+  #     # mainly to bound what a hosted model costs:
+  #     max_chunks: 0
 
 transformations:
   Account->ALL:

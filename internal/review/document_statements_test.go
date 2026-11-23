@@ -173,3 +173,35 @@ func TestEmptyReadingMarksTheVersionRead(t *testing.T) {
 		t.Fatal("an undone reading still marks its version read")
 	}
 }
+
+// A version read only in part is not counted as read; the next reading starts
+// at the furthest offset reached, and once a reading reaches the end the
+// version is read and has no progress left.
+func TestPartialReadingsContinue(t *testing.T) {
+	ctx := context.Background()
+	s := newStatementStore()
+	j := &Journal{Path: filepath.Join(t.TempDir(), "review.jsonl")}
+
+	for _, through := range []int{24000, 48000} {
+		if _, err := StorePartialDocumentStatements(ctx, s, j, "f1", "u", "v1", "m", nil, through); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if read, _ := j.ReadVersions(); read["v1"] {
+		t.Error("a version read only in part is counted as read")
+	}
+	progress, err := j.VersionProgress()
+	if err != nil || progress["v1"] != 48000 {
+		t.Fatalf("progress %v, %v; want the furthest offset, 48000", progress, err)
+	}
+
+	if _, err := StorePartialDocumentStatements(ctx, s, j, "f1", "u", "v1", "m", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if read, _ := j.ReadVersions(); !read["v1"] {
+		t.Error("a version read to its end is not counted as read")
+	}
+	if progress, _ := j.VersionProgress(); len(progress) != 0 {
+		t.Errorf("a version read to its end still has progress %v", progress)
+	}
+}

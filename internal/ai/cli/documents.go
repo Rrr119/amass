@@ -39,6 +39,9 @@ func writeDocumentRun(out io.Writer, root string, run ai.DocumentRun) error {
 		if d.ReadingID != "" {
 			_, _ = fmt.Fprintf(out, " [%s]", d.ReadingID)
 		}
+		if d.Through > 0 {
+			_, _ = fmt.Fprint(out, "; stopped at its part or time limit, the next reading continues")
+		}
 		_, _ = fmt.Fprintln(out)
 		// a dry run shows what would be stored, quotes included
 		if run.DryRun {
@@ -50,6 +53,11 @@ func writeDocumentRun(out io.Writer, root string, run ai.DocumentRun) error {
 
 	_, err := fmt.Fprintf(out, "read %d documents, skipped %d already read, %d remaining, failed %d: "+
 		"%d findings, %d rejected\n", run.Read, run.Skipped, run.Remaining, run.Failed, run.Statements, run.Rejected)
+	// documents read only in part are among the remaining: the next reading
+	// continues them
+	if err == nil && run.Partial > 0 {
+		_, err = fmt.Fprintf(out, "%d read in part, to be continued\n", run.Partial)
+	}
 	if err != nil || len(run.Failures) == 0 {
 		return err
 	}

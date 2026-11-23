@@ -146,6 +146,16 @@ for MCP-started runs:
 - **Passes:** it runs one every `Interval` (30 s) and once more when the
   engine is done, reading at most `Batch` (3) documents per domain target per
   pass.
+- **Long documents:** one reading of one document stops at
+  `options.ai.documents.document_timeout` (default 10 minutes) or
+  `max_chunks` (default none), whichever comes first, after the part in
+  progress (`readLimits`). It is journaled with `through`, the offset of the
+  cleaned text where the next part starts (`StorePartialDocumentStatements`);
+  `chunkSpans` gives the same parts for the same text, so the next reading
+  starts exactly there. A version read only in part is not counted as read
+  (`ReadVersions`); `VersionProgress` gives the offset the next reading starts
+  at, and the run counts the document as remaining, so the companion's next
+  pass continues it while the hold allows, and a later run otherwise.
 - **Holding the run open:** the collect manager holds the run open up to
   `HoldLimit` (`options.ai.documents.hold`, default 15 minutes; 0 sets a
   negative `HoldLimit`, which holds no run) while a pass is running or

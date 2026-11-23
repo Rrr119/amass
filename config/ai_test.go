@@ -208,6 +208,9 @@ func TestAIKeySet(t *testing.T) {
 		{Enabled: true, Provider: "ollama", Model: "m", Hold: "-1m"},
 		{Enabled: true, Provider: "ollama", Model: "m", Hold: "3h"},
 		{Enabled: true, Provider: "ollama", Model: "m", Hold: "soon"},
+		{Enabled: true, Provider: "ollama", Model: "m", DocumentTimeout: "-1m"},
+		{Enabled: true, Provider: "ollama", Model: "m", DocumentTimeout: "7h"},
+		{Enabled: true, Provider: "ollama", Model: "m", MaxChunks: -1},
 	} {
 		if bad.Validate() == nil {
 			t.Errorf("%+v was accepted", bad)
@@ -232,5 +235,22 @@ func TestDocumentModelHold(t *testing.T) {
 	}
 	if _, ok := (&DocumentModelSettings{}).HoldDuration(); ok {
 		t.Error("an empty hold is reported set")
+	}
+}
+
+// The document timeout defaults to 10 minutes; 0 sets no bound.
+func TestDocumentTimeout(t *testing.T) {
+	var nilSettings *DocumentModelSettings
+	for in, want := range map[string]time.Duration{"": DefaultDocumentTimeout, "0": 0, "25m": 25 * time.Minute} {
+		d := DocumentModelSettings{Enabled: true, Provider: "ollama", Model: "m", DocumentTimeout: in, MaxChunks: 20}
+		if err := d.Validate(); err != nil {
+			t.Errorf("document_timeout %q: %v", in, err)
+		}
+		if got := d.DocumentTimeoutDuration(); got != want {
+			t.Errorf("document_timeout %q = %v, want %v", in, got, want)
+		}
+	}
+	if nilSettings.DocumentTimeoutDuration() != DefaultDocumentTimeout {
+		t.Error("absent settings do not give the default document timeout")
 	}
 }
