@@ -21,6 +21,8 @@ type DNS struct {
 	mu      sync.Mutex
 	records map[string][]dns.RR
 	queries []string
+	// failing are zones whose names all answer SERVFAIL (Fail)
+	failing []string
 	// Addr is the resolver's address, host:port.
 	Addr string
 }
@@ -78,6 +80,15 @@ func (d *DNS) Add(t testing.TB, records ...string) {
 	}
 }
 
+// Fail makes every name in the zone, and the zone itself, answer SERVFAIL,
+// as the servers of a zone that does not answer queries do.
+func (d *DNS) Fail(zone string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.failing = append(d.failing, dns.Fqdn(strings.ToLower(zone)))
+}
+
 // Queries returns the queries asked so far, each as its type and name, such
 // as "A www.example.com.".
 func (d *DNS) Queries() []string {
@@ -117,8 +128,19 @@ func (d *DNS) serve(w dns.ResponseWriter, req *dns.Msg) {
 				records, found = d.records["*"+name[i:]]
 			}
 		}
+		failing := false
+		for _, zone := range d.failing {
+			if name == zone || strings.HasSuffix(name, "."+zone) {
+				failing = true
+			}
+		}
 		d.mu.Unlock()
 
+		if failing {
+			resp.Rcode = dns.RcodeServerFailure
+			_ = w.WriteMsg(resp)
+			return
+		}
 		if !found {
 			resp.Rcode = dns.RcodeNameError
 		}

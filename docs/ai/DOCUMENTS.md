@@ -31,6 +31,28 @@ flowchart LR
 | Evidence | `internal/lens/document_relations.go`, `document_evidence.go`, `document_lens_evidence.go` |
 | Data | `internal/semantics/statement_predicates.json`, `document_signals.json` |
 
+## How much the engine collects in one run
+
+The engine's documents plugin (`engine/plugins/documents`) bounds each run with
+the limits in `internal/semantics/documents.json`:
+
+- `max_per_run` (250): documents fetched for one registered domain in one run
+  (`admit`, counted across its hosts). A document past the limit is not marked
+  as tried, so a later run fetches it.
+- A document named inside another document read in the same run is left for a
+  later run too (`ledFromDocument`), so documents don't lead to documents
+  within a run.
+- `max_url_leads` (20): in-scope URLs one document hands the pipeline as leads.
+  Every URL it names is still stored and linked from the File by `contains`;
+  catalogs and link lists otherwise handed runs hundreds of pages each.
+- `refetch_after_days` (30): a URL with a File stored in that time is not
+  fetched again, so each run reaches documents not yet read.
+- Carry-over (`backlog`, the `Documents-Backlog-Handler` on FQDN events): when an
+  in-scope host comes up, its URLs (`URL --domain--> FQDN`) with a document
+  extension, no File and no attempt within `refetch_after_days` are handed to
+  the pipeline again, up to `max_per_run`. Without it, a document left by an
+  earlier run would only be fetched if something named it again.
+
 ## Nothing stored but findings
 
 The database keeps no document content. `lens.DocumentSources` gives each

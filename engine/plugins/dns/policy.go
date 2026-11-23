@@ -75,27 +75,17 @@ func (d *dnsSubs) queryPolicies(e *et.Event, apex *dbt.Entity, subdomain string)
 		rr   []dns.RR
 	}
 
-	ch := make(chan answer, len(PolicyNames))
-	for _, p := range PolicyNames {
-		go func(n string) {
-			var txt []dns.RR
-			if rr, err := support.PerformQuery(e.Session.Ctx(), n, dns.TypeTXT); err == nil {
-				for _, r := range rr {
-					if r.Header().Rrtype == dns.TypeTXT {
-						txt = append(txt, r)
-					}
-				}
-			} else if err == support.ErrFailedMaxDNSAttempts {
-				e.Session.Log().Warn(err.Error(), "fqdn", n,
-					slog.Group("plugin", "name", d.plugin.name, "handler", d.name))
-			}
-
-			ch <- answer{name: n, rr: txt}
-		}(p.Label + "." + subdomain)
+	names := make([]string, len(PolicyNames))
+	for i, p := range PolicyNames {
+		names[i] = p.Label + "." + subdomain
 	}
-
-	for range len(PolicyNames) {
-		a := <-ch
+	for i, rr := range d.probeAll(e, subdomain, names, dns.TypeTXT) {
+		a := answer{name: names[i]}
+		for _, r := range rr {
+			if r.Header().Rrtype == dns.TypeTXT {
+				a.rr = append(a.rr, r)
+			}
+		}
 		if len(a.rr) == 0 {
 			continue
 		}

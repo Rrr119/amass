@@ -31,6 +31,8 @@ type subsQtypes struct {
 type subsSession struct {
 	session et.Session
 	strset  *stringset.Set
+	// failures counts, by apex, the probes below it that failed outright
+	failures map[string]int
 }
 
 type dnsSubs struct {
@@ -220,30 +222,18 @@ func (d *dnsSubs) query(e *et.Event, subdomain string) []*relSubs {
 	d.queryAXFR(e, apexEnt, subdomain)
 
 	srvs := NamesByTier(Tier3)
-	rch := make(chan []*relSubs, len(srvs))
-	defer close(rch)
-
-	for _, name := range srvs {
-		go func(label, sub string, ch chan []*relSubs) {
-			n := name + "." + subdomain
-
-			var results []*relSubs
-			if rr, err := support.PerformQuery(e.Session.Ctx(), n, dns.TypeSRV); err == nil && len(rr) > 0 {
-				if records := d.store(e, n, rr); len(records) > 0 {
-					d.linkBelow(e, apexEnt, records[0].alias)
-					results = append(results, records...)
-				}
-			} else if err == support.ErrFailedMaxDNSAttempts {
-				e.Session.Log().Warn(err.Error(), "fqdn", n,
-					slog.Group("plugin", "name", d.plugin.name, "handler", d.name))
-			}
-			ch <- results
-		}(name, subdomain, rch)
+	names := make([]string, len(srvs))
+	for i, name := range srvs {
+		names[i] = name + "." + subdomain
 	}
-
-	for range len(srvs) {
-		answers := <-rch
-		alias = append(alias, answers...)
+	for i, rr := range d.probeAll(e, subdomain, names, dns.TypeSRV) {
+		if len(rr) == 0 {
+			continue
+		}
+		if records := d.store(e, names[i], rr); len(records) > 0 {
+			d.linkBelow(e, apexEnt, records[0].alias)
+			alias = append(alias, records...)
+		}
 	}
 
 	return alias
@@ -373,24 +363,29 @@ func (d *dnsSubs) process(e *et.Event, results []*relSubs) {
 	}
 }
 
+// sessionState returns the event's session state, creating it on first use.
+// The caller holds the lock.
+func (d *dnsSubs) sessionState(e *et.Event) *subsSession {
+	id := e.Session.ID().String()
+	s, found := d.sessNames[id]
+	if !found {
+		s = &subsSession{session: e.Session, strset: stringset.New(), failures: make(map[string]int)}
+		d.sessNames[id] = s
+	}
+	return s
+}
+
 func (d *dnsSubs) fqdnAvailable(e *et.Event, fqdn string) bool {
 	d.Lock()
 	defer d.Unlock()
 
-	id := e.Session.ID().String()
-	if _, found := d.sessNames[id]; !found {
-		d.sessNames[id] = &subsSession{
-			session: e.Session,
-			strset:  stringset.New(),
-		}
+	s := d.sessionState(e)
+	if s.strset.Has(fqdn) {
+		return false
 	}
 
-	var avail bool
-	if !d.sessNames[id].strset.Has(fqdn) {
-		avail = true
-		d.sessNames[id].strset.Insert(fqdn)
-	}
-	return avail
+	s.strset.Insert(fqdn)
+	return true
 }
 
 func (d *dnsSubs) releaseSessions() {

@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/owasp-amass/amass/v5/engine/plugins/archive"
@@ -74,6 +75,9 @@ type documents struct {
 	archive    *rate.Limiter
 	direct     *rate.Limiter
 	source     *et.Source
+
+	mu   sync.Mutex
+	runs map[string]*runState
 }
 
 func NewDocuments() et.Plugin {
@@ -109,6 +113,19 @@ func (d *documents) Start(r et.Registry) error {
 	}); err != nil {
 		return err
 	}
+	// documents earlier runs left unread are handed back when their host
+	// comes up again
+	if err := r.RegisterHandler(&et.Handler{
+		Plugin:       d,
+		Name:         d.name + "-Backlog-Handler",
+		Position:     30,
+		MaxInstances: 1,
+		Transforms:   []string{string(oam.URL)},
+		EventType:    oam.FQDN,
+		Callback:     d.backlog,
+	}); err != nil {
+		return err
+	}
 
 	d.log.Info("Plugin started")
 	return nil
@@ -135,6 +152,18 @@ func (d *documents) check(e *et.Event) error {
 		return err
 	}
 	if support.AssetMonitoredWithinTTL(e.Session, e.Entity, d.source, since) {
+		return nil
+	}
+	// a document stored recently is not fetched again, so each run reaches
+	// documents not yet read
+	if storedSince(e, e.Entity, refetchSince(rules)) {
+		support.MarkAssetMonitored(e.Session, e.Entity, d.source)
+		return nil
+	}
+	// a document left for a later run is not marked, so that run fetches it
+	if why := d.admit(e, e.Entity.Asset.Key(), u.Host, rules.MaxPerRun); why != "" {
+		e.Session.Log().Debug("document left for a later run", "url", u.Raw, "why", why,
+			slog.Group("plugin", "name", d.name, "handler", d.name+"-Handler"))
 		return nil
 	}
 	support.MarkAssetMonitored(e.Session, e.Entity, d.source)

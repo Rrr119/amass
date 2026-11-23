@@ -36,7 +36,7 @@ const maxLeads = 500
 // leads tallies what a document contributed, for its log line.
 type leads struct {
 	people, orgs, products, accounts, names, urls, emails, addrs, phones int
-	images, places, serials                                              int
+	images, places, serials, urlLeads                                    int
 }
 
 // author is a person the document's metadata names, with the name parts a
@@ -187,12 +187,23 @@ func (d *documents) contentLeads(e *et.Event, fent *dbt.Entity, u *oamurl.URL, d
 			addURL(x)
 		}
 	}
+	// every URL is stored and linked from the File, and at most
+	// max_url_leads in-scope ones are leads: a catalog or a link list would
+	// otherwise hand the run hundreds of pages
+	urlLeadCap := semantics.Documents().MaxURLLeads
 	for _, x := range urls {
-		if ent := d.linkAsset(e, fent, x); ent != nil {
-			n.urls++
-			if inScope(e, x.Host) {
-				d.dispatch(e, ent, x.Raw)
+		ent := d.linkAsset(e, fent, x)
+		if ent == nil {
+			continue
+		}
+
+		n.urls++
+		if inScope(e, x.Host) && n.urlLeads < urlLeadCap {
+			n.urlLeads++
+			if _, isDoc := semantics.Documents().DocumentFor(x.Path); isDoc {
+				d.ledFromDocument(e, ent.Asset.Key())
 			}
+			d.dispatch(e, ent, x.Raw)
 		}
 	}
 
@@ -356,6 +367,6 @@ func (d *documents) dispatch(e *et.Event, ent *dbt.Entity, name string) {
 // logLeads records what one document contributed.
 func (d *documents) logLeads(e *et.Event, u *oamurl.URL, n leads) {
 	e.Session.Log().Info("document leads", "url", u.Raw, "people", n.people, "organizations", n.orgs,
-		"products", n.products, "accounts", n.accounts, "names", n.names, "urls", n.urls, "emails", n.emails, "addresses", n.addrs,
+		"products", n.products, "accounts", n.accounts, "names", n.names, "urls", n.urls, "url_leads", n.urlLeads, "emails", n.emails, "addresses", n.addrs,
 		"phones", n.phones, "images", n.images, "places", n.places, "serials", n.serials, slog.Group("plugin", "name", d.name, "handler", d.name+"-Handler"))
 }
