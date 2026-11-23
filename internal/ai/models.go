@@ -144,7 +144,8 @@ func DocumentModel(d *config.DocumentModelSettings) (llm.Model, string, time.Dur
 
 	var key string
 	if d.APIKeyEnv != "" {
-		key = os.Getenv(d.APIKeyEnv)
+		// a key pasted with a trailing newline or space is refused as invalid
+		key = strings.TrimSpace(os.Getenv(d.APIKeyEnv))
 	}
 	provider := strings.ToLower(strings.TrimSpace(d.Provider))
 	zero := 0.0

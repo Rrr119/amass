@@ -307,7 +307,7 @@ func run(group string, in io.Reader, out, errout io.Writer, args []string) error
 	if usesModel && modelName != "" {
 		var err error
 		provider, err = newProvider(providerSettings{Provider: providerName, Endpoint: endpoint, Model: modelName,
-			APIKey: os.Getenv(keyEnv), AllowHTTP: allowHTTP, Timeout: modelTimeout, MaxTokens: maxTokens,
+			APIKey: strings.TrimSpace(os.Getenv(keyEnv)), AllowHTTP: allowHTTP, Timeout: modelTimeout, MaxTokens: maxTokens,
 			ContextTokens: contextTokens, Temperature: temperature, Think: think})
 		if err != nil {
 			return err

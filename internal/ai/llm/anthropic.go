@@ -154,7 +154,7 @@ func (m AnthropicModel) Generate(ctx context.Context, history []Message, specs [
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return out, fmt.Errorf("anthropic: HTTP status %d", resp.StatusCode)
+		return out, fmt.Errorf("anthropic: HTTP status %d%s", resp.StatusCode, anthropicError(body))
 	}
 
 	var decoded struct {
@@ -197,4 +197,25 @@ func (m AnthropicModel) Generate(ctx context.Context, history []Message, specs [
 	}
 
 	return out, nil
+}
+
+// anthropicError returns the reason the API gave for refusing a request, such
+// as ": authentication_error: invalid x-api-key", or "" when the body holds
+// none. The API key is never part of it.
+func anthropicError(body []byte) string {
+	var e struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &e) != nil || (e.Error.Type == "" && e.Error.Message == "") {
+		return ""
+	}
+
+	msg := e.Error.Message
+	if len(msg) > 300 {
+		msg = msg[:300]
+	}
+	return ": " + strings.TrimPrefix(e.Error.Type+": "+msg, ": ")
 }

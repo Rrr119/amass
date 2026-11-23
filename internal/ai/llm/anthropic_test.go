@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -98,5 +99,23 @@ func TestAnthropicRequestShape(t *testing.T) {
 	}
 	if _, set := body["system"]; set {
 		t.Fatal("an empty system prompt must be omitted")
+	}
+}
+
+// A refused request reports the reason the API gave, never the key.
+func TestAnthropicErrorReason(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`))
+	}))
+	defer s.Close()
+
+	_, err := (AnthropicModel{Endpoint: s.URL, ModelName: "some-model", APIKey: "test-secret"}).Generate(
+		context.Background(), []Message{{Role: "user", Text: "hi"}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "401: authentication_error: invalid x-api-key") {
+		t.Fatalf("error = %v, want the API's reason", err)
+	}
+	if strings.Contains(err.Error(), "test-secret") {
+		t.Error("the error shows the API key")
 	}
 }
