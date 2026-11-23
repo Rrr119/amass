@@ -31,8 +31,6 @@ type DocumentRules struct {
 	// MaxURLLeads caps the in-scope URLs one document hands the pipeline as
 	// leads; every URL it names is still stored.
 	MaxURLLeads int `json:"max_url_leads"`
-	// RefetchAfterDays is how long a stored document is not fetched again.
-	RefetchAfterDays int `json:"refetch_after_days"`
 	// PlaceholderAuthors are author values written by default, naming no one.
 	PlaceholderAuthors []string `json:"placeholder_authors"`
 	// PlaceholderCompanies are Company values preset by a computer's maker or
@@ -58,8 +56,8 @@ var loadDocumentRules = sync.OnceValue(func() DocumentRules {
 	if r.MaxBytes <= 0 || len(r.Types) == 0 || len(r.Sources) == 0 {
 		panic("documents.json: max_bytes, types and sources are required")
 	}
-	if r.MaxPerRun <= 0 || r.MaxURLLeads <= 0 || r.RefetchAfterDays <= 0 {
-		panic("documents.json: max_per_run, max_url_leads and refetch_after_days must be positive")
+	if r.MaxPerRun <= 0 || r.MaxURLLeads <= 0 {
+		panic("documents.json: max_per_run and max_url_leads must be positive")
 	}
 
 	r.byExt = make(map[string]DocumentType, len(r.Types))

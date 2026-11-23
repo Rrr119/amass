@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/owasp-amass/amass/v5/engine/plugins/plugintest"
+	"github.com/owasp-amass/amass/v5/engine/plugins/support"
 	et "github.com/owasp-amass/amass/v5/engine/types"
 	"github.com/owasp-amass/amass/v5/internal/semantics"
+	oam "github.com/owasp-amass/open-asset-model"
 	oamdns "github.com/owasp-amass/open-asset-model/dns"
 	oamgen "github.com/owasp-amass/open-asset-model/general"
 	oamurl "github.com/owasp-amass/open-asset-model/url"
@@ -111,7 +113,11 @@ func TestURLLeadsAreCapped(t *testing.T) {
 	if f.file(t, "https://www.example.com/form.pdf") != nil {
 		t.Error("a document named in a document was fetched in the same run")
 	}
-	if f.d.attemptedSince(doc, doc.Entity, refetchSince(semantics.Documents())) {
+	since, err := support.TTLStartTime(f.sess.Config(), string(oam.URL), string(oam.File), f.d.name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.d.attemptedSince(doc, doc.Entity, since) {
 		t.Error("a document left for a later run was marked as tried")
 	}
 }

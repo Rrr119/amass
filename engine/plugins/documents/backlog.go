@@ -19,8 +19,8 @@ import (
 
 // backlog hands the pipeline again the documents an in-scope host serves
 // that earlier runs left unread: URLs of the host (URL --domain--> FQDN) with
-// a document's extension, no File stored, and no attempt within
-// refetch_after_days. They were left past a run's limit, or because a
+// a document's extension, no File stored, and no attempt within the URL->File
+// ttl in the config. They were left past a run's limit, or because a
 // document named them, and nothing else might name them again. At most
 // max_per_run are handed over, the most the run can fetch for the domain.
 func (d *documents) backlog(e *et.Event) error {
@@ -47,7 +47,10 @@ func (d *documents) backlog(e *et.Event) error {
 	}
 
 	rules := semantics.Documents()
-	refetch := refetchSince(rules)
+	refetch, err := support.TTLStartTime(e.Session.Config(), string(oam.URL), string(oam.File), d.name)
+	if err != nil {
+		return err
+	}
 	var handed int
 	for _, edge := range edges {
 		if handed >= rules.MaxPerRun || ctx.Err() != nil {

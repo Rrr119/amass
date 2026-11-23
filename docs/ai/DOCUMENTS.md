@@ -45,11 +45,14 @@ the limits in `internal/semantics/documents.json`:
 - `max_url_leads` (20): in-scope URLs one document hands the pipeline as leads.
   Every URL it names is still stored and linked from the File by `contains`;
   catalogs and link lists otherwise handed runs hundreds of pages each.
-- `refetch_after_days` (30): a URL with a File stored in that time is not
-  fetched again, so each run reaches documents not yet read.
+- The transformation TTL in the config (`support.TTLStartTime(cfg, "URL",
+  "File", "Documents")`): `URL->Documents` when present, otherwise `URL->File`
+  (30 days in the shipped configs), otherwise `URL->ALL`. A URL with a File
+  stored within it is not fetched again, so each run reaches documents not yet
+  read. Users set how often documents are refreshed there.
 - Carry-over (`backlog`, the `Documents-Backlog-Handler` on FQDN events): when an
   in-scope host comes up, its URLs (`URL --domain--> FQDN`) with a document
-  extension, no File and no attempt within `refetch_after_days` are handed to
+  extension, no File and no attempt within the `URL->File` ttl are handed to
   the pipeline again, up to `max_per_run`. Without it, a document left by an
   earlier run would only be fetched if something named it again.
 

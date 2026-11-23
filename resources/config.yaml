@@ -177,3 +177,5 @@ transformations:
   TLSCertificate->ALL:
     ttl: 10800 # 7 days
   URL->ALL:
+  URL->File:
+    ttl: 43200 # 30 days: a stored document is not fetched again within it

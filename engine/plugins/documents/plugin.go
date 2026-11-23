@@ -154,9 +154,9 @@ func (d *documents) check(e *et.Event) error {
 	if support.AssetMonitoredWithinTTL(e.Session, e.Entity, d.source, since) {
 		return nil
 	}
-	// a document stored recently is not fetched again, so each run reaches
-	// documents not yet read
-	if storedSince(e, e.Entity, refetchSince(rules)) {
+	// a document stored within the URL->File ttl is not fetched again, so
+	// each run reaches documents not yet read
+	if storedSince(e, e.Entity, since) {
 		support.MarkAssetMonitored(e.Session, e.Entity, d.source)
 		return nil
 	}

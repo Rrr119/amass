@@ -12,7 +12,6 @@ import (
 
 	"github.com/owasp-amass/amass/v5/engine/plugins/support"
 	et "github.com/owasp-amass/amass/v5/engine/types"
-	"github.com/owasp-amass/amass/v5/internal/semantics"
 	dbt "github.com/owasp-amass/asset-db/types"
 	"golang.org/x/net/publicsuffix"
 )
@@ -108,12 +107,6 @@ func storedSince(e *et.Event, urlent *dbt.Entity, t time.Time) bool {
 
 	edges, err := e.Session.DB().OutgoingEdges(ctx, urlent, t, "file")
 	return err == nil && len(edges) > 0
-}
-
-// refetchSince is the time before which a stored document may be fetched
-// again.
-func refetchSince(rules semantics.DocumentRules) time.Time {
-	return time.Now().Add(-time.Duration(rules.RefetchAfterDays) * 24 * time.Hour)
 }
 
 // attemptedSince reports whether this plugin tried the URL since t, whether
