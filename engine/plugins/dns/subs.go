@@ -212,6 +212,10 @@ func (d *dnsSubs) query(e *et.Event, subdomain string) []*relSubs {
 		return alias
 	}
 
+	if apexEnt := d.plugin.getApex(subdomain); apexEnt != nil {
+		d.queryAXFR(e, apexEnt, subdomain)
+	}
+
 	srvs := NamesByTier(Tier3)
 	rch := make(chan []*relSubs, len(srvs))
 	defer close(rch)

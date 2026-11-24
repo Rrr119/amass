@@ -9,12 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
+	"net/url"
 	"time"
 
 	"github.com/owasp-amass/amass/v5/engine/plugins/support"
 	et "github.com/owasp-amass/amass/v5/engine/types"
-	amassdns "github.com/owasp-amass/amass/v5/internal/net/dns"
 	amasshttp "github.com/owasp-amass/amass/v5/internal/net/http"
 	dbt "github.com/owasp-amass/asset-db/types"
 	oam "github.com/owasp-amass/open-asset-model"
@@ -36,7 +35,7 @@ func NewCrtsh() et.Plugin {
 		name:   "crt.sh",
 		rlimit: rate.NewLimiter(limit, 1),
 		source: &et.Source{
-			Name:       "HackerTarget",
+			Name:       "crt.sh",
 			Confidence: 100,
 		},
 	}
@@ -104,34 +103,51 @@ func (c *crtsh) query(e *et.Event, name string) []*dbt.Entity {
 	defer cancel()
 
 	resp, err := amasshttp.RequestWebPage(ctx, e.Session.Clients().General, &amasshttp.Request{
-		URL: "https://crt.sh/?CN=" + name + "&output=json&exclude=expired",
+		URL: "https://crt.sh/?q=" + url.QueryEscape(name) + "&output=json&exclude=expired&deduplicate=Y",
 	})
 	e.Session.NetSem().Release()
 	if err != nil {
 		return nil
 	}
 
-	var result struct {
-		Certs []struct {
-			Names string `json:"name_value"`
-		} `json:"certs"`
-	}
-	if err := json.Unmarshal([]byte("{\"certs\":"+resp.Body+"}"), &result); err != nil {
-		return nil
-	}
-
 	var names []string
-	for _, cert := range result.Certs {
-		for _, n := range strings.Split(cert.Names, "\n") {
-			nstr := strings.ToLower(strings.TrimSpace(amassdns.RemoveAsteriskLabel(n)))
-			// if the subdomain is not in scope, skip it
-			if _, conf := e.Session.Scope().IsAssetInScope(&oamdns.FQDN{Name: nstr}, 0); conf > 0 {
-				names = append(names, nstr)
-			}
+	for _, n := range parseCrtSh([]byte(resp.Body), name) {
+		if _, conf := e.Session.Scope().IsAssetInScope(&oamdns.FQDN{Name: n}, 0); conf > 0 {
+			names = append(names, n)
 		}
 	}
 
 	return c.store(e, names)
+}
+
+// parseCrtSh returns the normalized names below domain from a crt.sh JSON
+// response. The object form is accepted as well as crt.sh's usual array.
+func parseCrtSh(body []byte, domain string) []string {
+	type cert struct {
+		CommonName string `json:"common_name"`
+		NameValue  string `json:"name_value"`
+	}
+
+	var certs []cert
+	if err := json.Unmarshal(body, &certs); err != nil {
+		var result struct {
+			Certs []cert `json:"certs"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil
+		}
+		certs = result.Certs
+	}
+
+	var names []string
+	for _, entry := range certs {
+		for _, value := range []string{entry.CommonName, entry.NameValue} {
+			for _, name := range splitCTNames(value) {
+				names = append(names, name)
+			}
+		}
+	}
+	return mergeCTNames(domain, names)
 }
 
 func (c *crtsh) store(e *et.Event, names []string) []*dbt.Entity {

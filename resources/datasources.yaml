@@ -67,6 +67,8 @@ datasources:
 #      account: 
 #        username: null
 #        apikey: null
+#  - name: CertSpotter
+#    ttl: 1440
 #  - name: DNSDB
 #    ttl: 4320
 #    creds:
